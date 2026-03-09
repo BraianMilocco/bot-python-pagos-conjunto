@@ -280,6 +280,97 @@ def get_pending_summary() -> dict:
     }
 
 
+def get_balance_summary(date_from: date, date_to: date) -> dict:
+    """Calcula ingresos, gastos y ahorros por persona para un período."""
+    conn = get_connection()
+
+    incomes = conn.execute(
+        """SELECT u.name, t.currency, SUM(t.amount) as total
+           FROM transactions t JOIN users u ON t.user_id = u.id
+           WHERE t.type = 'income' AND t.date BETWEEN %s AND %s
+           GROUP BY u.name, u.id, t.currency""",
+        (date_from, date_to),
+    ).fetchall()
+
+    personal_expenses = conn.execute(
+        """SELECT u.name, t.currency, SUM(t.amount) as total
+           FROM transactions t JOIN users u ON t.user_id = u.id
+           WHERE t.type = 'expense' AND t.scope = 'personal' AND t.date BETWEEN %s AND %s
+           GROUP BY u.name, u.id, t.currency""",
+        (date_from, date_to),
+    ).fetchall()
+
+    # Gastos compartidos: 50% si for_user IS NULL, 100% si es específico para ese usuario
+    shared_expenses = conn.execute(
+        """SELECT u.name, t.currency,
+                  SUM(CASE WHEN t.for_user IS NULL THEN t.amount / 2.0 ELSE t.amount END) as total
+           FROM transactions t
+           JOIN users u ON (t.for_user = u.id OR t.for_user IS NULL)
+           WHERE t.type = 'expense' AND t.scope = 'shared' AND t.date BETWEEN %s AND %s
+           GROUP BY u.name, u.id, t.currency""",
+        (date_from, date_to),
+    ).fetchall()
+
+    savings = conn.execute(
+        """SELECT u.name, t.currency, SUM(t.amount) as total
+           FROM transactions t JOIN users u ON t.user_id = u.id
+           WHERE t.type = 'saving' AND t.date BETWEEN %s AND %s
+           GROUP BY u.name, u.id, t.currency""",
+        (date_from, date_to),
+    ).fetchall()
+
+    conn.close()
+    return {
+        "incomes": incomes,
+        "personal_expenses": personal_expenses,
+        "shared_expenses": shared_expenses,
+        "savings": savings,
+    }
+
+
+def get_accumulated_balance() -> dict:
+    """Calcula el saldo acumulado histórico por persona (sin filtro de fechas)."""
+    conn = get_connection()
+
+    incomes = conn.execute(
+        """SELECT u.name, t.currency, SUM(t.amount) as total
+           FROM transactions t JOIN users u ON t.user_id = u.id
+           WHERE t.type = 'income'
+           GROUP BY u.name, u.id, t.currency""",
+    ).fetchall()
+
+    personal_expenses = conn.execute(
+        """SELECT u.name, t.currency, SUM(t.amount) as total
+           FROM transactions t JOIN users u ON t.user_id = u.id
+           WHERE t.type = 'expense' AND t.scope = 'personal'
+           GROUP BY u.name, u.id, t.currency""",
+    ).fetchall()
+
+    shared_expenses = conn.execute(
+        """SELECT u.name, t.currency,
+                  SUM(CASE WHEN t.for_user IS NULL THEN t.amount / 2.0 ELSE t.amount END) as total
+           FROM transactions t
+           JOIN users u ON (t.for_user = u.id OR t.for_user IS NULL)
+           WHERE t.type = 'expense' AND t.scope = 'shared'
+           GROUP BY u.name, u.id, t.currency""",
+    ).fetchall()
+
+    savings = conn.execute(
+        """SELECT u.name, t.currency, SUM(t.amount) as total
+           FROM transactions t JOIN users u ON t.user_id = u.id
+           WHERE t.type = 'saving'
+           GROUP BY u.name, u.id, t.currency""",
+    ).fetchall()
+
+    conn.close()
+    return {
+        "incomes": incomes,
+        "personal_expenses": personal_expenses,
+        "shared_expenses": shared_expenses,
+        "savings": savings,
+    }
+
+
 def get_last_transactions(limit: int = 5) -> list:
     conn = get_connection()
     rows = conn.execute(

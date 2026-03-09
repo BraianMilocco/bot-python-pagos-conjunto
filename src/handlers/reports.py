@@ -9,7 +9,7 @@ from telegram.ext import (
     filters,
 )
 from src import keyboards
-from src.models import get_report_summary, get_last_transactions, get_pending_summary
+from src.models import get_report_summary, get_last_transactions, get_pending_summary, get_balance_summary, get_accumulated_balance
 
 ST_REPORT_RANGE_FROM, ST_REPORT_RANGE_TO = range(10, 12)
 
@@ -109,6 +109,31 @@ async def _send_report_message(message, date_from: date, date_to: date, title: s
 
 def _fmt(amount: float, currency: str) -> str:
     return f"{amount:,.2f} {currency}"
+
+
+def _compute_net_per_user(balance_data: dict) -> dict[str, dict[str, dict[str, float]]]:
+    """
+    Devuelve {nombre: {moneda: {income, expenses, savings, net}}}
+    con los totales netos por persona y moneda.
+    """
+    result: dict[str, dict[str, dict[str, float]]] = {}
+
+    def _add(section: str, rows):
+        for row in rows:
+            name, cur, total = row["name"], row["currency"], float(row["total"])
+            result.setdefault(name, {}).setdefault(cur, {"income": 0, "expenses": 0, "savings": 0})
+            result[name][cur][section] += total
+
+    _add("income", balance_data["incomes"])
+    _add("expenses", balance_data["personal_expenses"])
+    _add("expenses", balance_data["shared_expenses"])
+    _add("savings", balance_data["savings"])
+
+    for name, currencies in result.items():
+        for cur, vals in currencies.items():
+            vals["net"] = vals["income"] - vals["expenses"] - vals["savings"]
+
+    return result
 
 
 def _build_report_text(date_from: date, date_to: date, title: str) -> str:
@@ -237,6 +262,37 @@ def _build_report_text(date_from: date, date_to: date, title: str) -> str:
                 f"     Pagado: {_fmt(item['paid_amount'], item['currency'])} · "
                 f"*Resta: {_fmt(remaining, item['currency'])}*"
             )
+
+    # ── SALDO DEL PERÍODO ────────────────────────────────
+    period_balance = get_balance_summary(date_from, date_to)
+    period_net = _compute_net_per_user(period_balance)
+    if period_net:
+        lines.append("")
+        lines.append("📈 *SALDO DEL PERÍODO*")
+        for name, currencies in period_net.items():
+            for cur, vals in currencies.items():
+                net = vals["net"]
+                sign = "+" if net >= 0 else ""
+                lines.append(
+                    f"  *{name}*\n"
+                    f"    Ingresos: {_fmt(vals['income'], cur)}\n"
+                    f"    Gastos:  -{_fmt(vals['expenses'], cur)}\n"
+                    f"    Ahorros: -{_fmt(vals['savings'], cur)}\n"
+                    f"    Disponible: *{sign}{_fmt(net, cur)}*"
+                )
+
+    # ── SALDO ACUMULADO ───────────────────────────────────
+    accum_balance = get_accumulated_balance()
+    accum_net = _compute_net_per_user(accum_balance)
+    if accum_net:
+        lines.append("")
+        lines.append("🏦 *SALDO ACUMULADO (histórico)*")
+        for name, currencies in accum_net.items():
+            for cur, vals in currencies.items():
+                net = vals["net"]
+                sign = "+" if net >= 0 else ""
+                lines.append(f"  *{name}*: {sign}{_fmt(net, cur)}")
+        lines.append("  _\\(ingresos − gastos − ahorros desde el inicio\\)_")
 
     return "\n".join(lines)
 
