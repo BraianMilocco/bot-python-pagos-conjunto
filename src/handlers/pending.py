@@ -301,7 +301,7 @@ async def handle_pay_amount(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return PEND_PAY_AMOUNT
 
     expense = get_pending_expense_by_id(context.user_data["expense_id"])
-    remaining = expense["total_amount"] - expense["paid_amount"]
+    remaining = float(expense["total_amount"]) - float(expense["paid_amount"])
 
     if amount > remaining + 0.01:  # tolerancia por float
         await update.message.reply_text(
